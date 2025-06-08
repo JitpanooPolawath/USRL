@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
+import gc
+import os
 import numpy as np
 from PIL import Image
 import numpy as np
@@ -12,9 +14,9 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 
 LATENT_DIM = 64
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 4e-4
 BATCH_SIZE = 64
-EPOCHS = 20 # Adjust as needed
+EPOCHS = 100 # Adjust as needed
 IMAGE_HEIGHT = 224 # New resized height
 IMAGE_WIDTH = 160  # New resized width
 
@@ -27,47 +29,85 @@ transform = transforms.Compose([
 ])
 
 
-def saveImage(array):
-    
-    # Assuming your array is called 'array'
-    # Make sure values are in the correct range (0-255) and data type
-    if array.dtype != np.uint8:
-        # If values are in range 0-1, scale to 0-255
-        if array.max() <= 1.0:
-            array = (array * 255).astype(np.uint8)
+def saveImage(tensor, original):
+
+    # Convert torch tensor to numpy
+    if isinstance(tensor, torch.Tensor):
+        if tensor.dim() == 4:  # (batch, channels, height, width)
+            array = tensor.squeeze(0).cpu().numpy()
         else:
-            array = array.astype(np.uint8)
+            array = tensor.cpu().numpy()
+        
+        # If channels first (C, H, W), convert to channels last (H, W, C)
+        if array.shape[0] == 3:  # RGB channels
+            array = np.transpose(array, (1, 2, 0))  # (H, W, C)
+    else:
+        array = tensor
+    
+    # Make sure values are in the correct range (0-255) and data type
+    for i, arr in enumerate([array, original]):
+        if arr.dtype != np.uint8:
+            # If values are in range 0-1, scale to 0-255
+            if arr.max() <= 1.0:
+                arr = (arr * 255).astype(np.uint8)
+            else:
+                arr = arr.astype(np.uint8)
 
-    # Convert to PIL Image
-    image = Image.fromarray(array)
+        image = Image.fromarray(arr)
+        os.makedirs('./outputimage/',exist_ok=True)
+        if i == 0:
+            image.save(f'./outputimage/testoutput.png')
+        else:
+            image.save(f'./outputimage/exampleoutput.png')
 
-    # Save or display
-    image.save('output.png')
 
-
-# Create a dummy dataset for demonstration
-# In your project, replace this with your actual dataset loader
-class MyCustomDataset(Dataset):
-    def __init__(self, filepath, transform=None):
-        # Generating random data in (H, W, C) format
-        self.data = np.load(filepath)
+class MemoryEfficientDataset(Dataset):
+    def __init__(self, filepaths, transform=None, train_split=0.9):
+        self.filepaths = filepaths
         self.transform = transform
+        
+        # Use memory mapping instead of loading into RAM
+        self.mmaps = []
+        self.file_lengths = []
+        self.cumulative_lengths = [0]
+        
+        for filepath in filepaths:
+            # Memory map the file (doesn't load into RAM)
+            mmap_data = np.load(filepath, mmap_mode='r')  # Read-only memory map
+            
+            # Calculate train split length
+            total_length = len(mmap_data)
+            train_length = int(total_length * train_split)
+            
+            self.mmaps.append(mmap_data)
+            self.file_lengths.append(train_length)
+            self.cumulative_lengths.append(self.cumulative_lengths[-1] + train_length)
+        
+        self.total_length = self.cumulative_lengths[-1]
+        print(f"Total dataset size: {self.total_length} (memory mapped)")
 
     def __len__(self):
-        return len(self.data)
+        return self.total_length
 
     def __getitem__(self, idx):
-        image = self.data[idx]
+        # Find which file this index belongs to
+        file_idx = 0
+        for i, cum_length in enumerate(self.cumulative_lengths[1:]):
+            if idx < cum_length:
+                file_idx = i
+                break
+        
+        # Calculate local index within the file
+        local_idx = idx - self.cumulative_lengths[file_idx]
+        
+        # Access data from memory-mapped file (only loads this specific item)
+        image = self.mmaps[file_idx][local_idx].copy()
+        
         if self.transform:
             image = self.transform(image)
-        # We don't have labels, but DataLoader expects a tuple
         return image, 0
 
-# Create Datasets and DataLoaders
-train_dataset = MyCustomDataset('Breakout-v5.npy', transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-
-# --- Step 3: Define the Model Architectures (Refactored) ---
+# --- Step 3: Model Architectures (Refactored) ---
 
 class Encoder(nn.Module):
     def __init__(self, latent_dim):
@@ -119,53 +159,83 @@ class Autoencoder(nn.Module):
         return reconstruction
 
 if __name__ == "__main__":
+    training = True
 
-    # --- Step 4: Instantiate, Train, and Save ---
-    model = Autoencoder(LATENT_DIM).to(device)
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    if training:
+        # Create Datasets and DataLoaders
+        filepaths = ['Breakout-v5.npy']
+        train_dataset = MemoryEfficientDataset(filepaths, transform=transform)
+        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+        # --- Step 4: Instantiate, Train, and Save ---
+        model = Autoencoder(LATENT_DIM).to(device)
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    # Training Loop
-    for epoch in range(EPOCHS):
-        model.train()
-        for imgs, _ in train_loader:
-            imgs = imgs.to(device)
-            optimizer.zero_grad()
-            outputs = model(imgs)
-            loss = criterion(outputs, imgs)
-            loss.backward()
-            optimizer.step()
-        print(f"Epoch [{epoch+1}/{EPOCHS}], Loss: {loss.item():.6f}")
+        print("--- Start training ---")
+        # Training Loop
+        for epoch in range(EPOCHS):
+            model.train()
+            for batch_idx, (imgs, _) in enumerate(train_loader):
+                imgs = imgs.to(device)
+                optimizer.zero_grad()
+                outputs = model(imgs)
+                loss = criterion(outputs, imgs)
+                loss.backward()
+                optimizer.step()
 
-    print("\n--- Training Finished ---")
+                # Clear cache periodically
+                if batch_idx % 50 == 0:  # Every 50 batches
+                    torch.cuda.empty_cache()  # Clear GPU cache
+                    gc.collect()  # Clear CPU cache
 
-    # --- SAVE THE ENCODER ---
-    # Access the encoder part and save its state dictionary
-    torch.save(model.encoder.state_dict(), 'encoder_model.pth')
-    print("Encoder model state_dict saved to encoder_model.pth")
+            print(f"Epoch [{epoch+1}/{EPOCHS}], Loss: {loss.item()}")
+
+        print("\n--- Training Finished ---")
+
+
+        # --- SAVE THE AUTOENCODER ---
+        torch.save(model.state_dict(), 'autoencoder.pth')
+        print("Model state_dict saved to autoencoder.pth")
+
+        # --- SAVE THE ENCODER ---
+        # Access the encoder part and save its state dictionary
+        torch.save(model.encoder.state_dict(), 'encoder_model.pth')
+        print("Encoder model state_dict saved to encoder_model.pth")
+
+    print("\n--- Loading and using the saved autoencoder ---")
+    loaded_autoencoder = Autoencoder(latent_dim=LATENT_DIM).to(device)
+    loaded_autoencoder.load_state_dict(torch.load('autoencoder.pth'))
+
+    # Test saved autoencoder trained correctly
+    loaded_autoencoder.eval()
+    example_data = np.load('Breakout-v5.npy')
+    example_data = example_data[17980]
+    example_tensor = torch.from_numpy(example_data).float() # Convert to float32
+    example_tensor = example_tensor.unsqueeze(0).to(device)   # Add batch: (1, 210, 160, 3)
+    example_tensor = example_tensor.permute(0, 3, 1, 2)  # Reorder to: (1, 3, 210, 160)
+    example_tensor = example_tensor / 255.0  # Normalize to [0, 1]
+    with torch.no_grad():
+        output = loaded_autoencoder(example_tensor)
+    print("Saving image")
+    saveImage(output, example_data)
 
     # --- Step 5: Load and Use the Saved Encoder ---
     print("\n--- Loading and using the saved encoder ---")
 
-    # 1. Instantiate a new encoder object
     loaded_encoder = Encoder(latent_dim=LATENT_DIM).to(device)
-
-    # 2. Load the saved weights
     loaded_encoder.load_state_dict(torch.load('encoder_model.pth'))
-
-    # 3. Set to evaluation mode
     loaded_encoder.eval()
-
-    # Create a single dummy image with the original size (210, 160, 3)
-    single_image_np = np.random.randint(0, 256, (210, 160, 3), dtype=np.uint8)
-
-    # Preprocess it exactly as you did for training
-    input_tensor = transform(single_image_np).unsqueeze(0).to(device) # Add batch dimension (1, C, H, W)
-    print(f"Input tensor shape for encoder: {input_tensor.shape}")
+    example_data = np.load('Breakout-v5.npy')
+    example_data = example_data[17980]
+    example_tensor = torch.from_numpy(example_data).float() # Convert to float32
+    example_tensor = example_tensor.unsqueeze(0).to(device)   # Add batch: (1, 210, 160, 3)
+    example_tensor = example_tensor.permute(0, 3, 1, 2)  # Reorder to: (1, 3, 210, 160)
+    example_tensor = example_tensor / 255.0  # Normalize to [0, 1]
+    print(f"Input tensor shape for encoder: {example_tensor.shape}")
 
     # Get the latent vector
     with torch.no_grad():
-        latent_vector = loaded_encoder(input_tensor)
+        latent_vector = loaded_encoder(example_tensor)
 
     print(f"Shape of the resulting latent vector: {latent_vector.shape}") # Should be (1, LATENT_DIM)
     print("Example latent vector:")
