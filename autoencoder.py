@@ -4,7 +4,8 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 import numpy as np
-import matplotlib.pyplot as plt
+from PIL import Image
+import numpy as np
 
 # --- Step 1: Define Hyperparameters and Device ---
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -25,12 +26,31 @@ transform = transforms.Compose([
     transforms.ToTensor(), # Scales to [0, 1] and changes to (C, H, W)
 ])
 
+
+def saveImage(array):
+    
+    # Assuming your array is called 'array'
+    # Make sure values are in the correct range (0-255) and data type
+    if array.dtype != np.uint8:
+        # If values are in range 0-1, scale to 0-255
+        if array.max() <= 1.0:
+            array = (array * 255).astype(np.uint8)
+        else:
+            array = array.astype(np.uint8)
+
+    # Convert to PIL Image
+    image = Image.fromarray(array)
+
+    # Save or display
+    image.save('output.png')
+
+
 # Create a dummy dataset for demonstration
 # In your project, replace this with your actual dataset loader
 class MyCustomDataset(Dataset):
-    def __init__(self, num_samples, transform=None):
+    def __init__(self, filepath, transform=None):
         # Generating random data in (H, W, C) format
-        self.data = np.random.randint(0, 256, (num_samples, 210, 160, 3), dtype=np.uint8)
+        self.data = np.load(filepath)
         self.transform = transform
 
     def __len__(self):
@@ -44,7 +64,7 @@ class MyCustomDataset(Dataset):
         return image, 0
 
 # Create Datasets and DataLoaders
-train_dataset = MyCustomDataset(num_samples=1000, transform=transform)
+train_dataset = MyCustomDataset('Breakout-v5.npy', transform=transform)
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 # --- Step 3: Define the Model Architectures (Refactored) ---
@@ -98,53 +118,55 @@ class Autoencoder(nn.Module):
         reconstruction = self.decoder(latent)
         return reconstruction
 
-# --- Step 4: Instantiate, Train, and Save ---
-model = Autoencoder(LATENT_DIM).to(device)
-criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+if __name__ == "__main__":
 
-# Training Loop
-for epoch in range(EPOCHS):
-    model.train()
-    for imgs, _ in train_loader:
-        imgs = imgs.to(device)
-        optimizer.zero_grad()
-        outputs = model(imgs)
-        loss = criterion(outputs, imgs)
-        loss.backward()
-        optimizer.step()
-    print(f"Epoch [{epoch+1}/{EPOCHS}], Loss: {loss.item():.6f}")
+    # --- Step 4: Instantiate, Train, and Save ---
+    model = Autoencoder(LATENT_DIM).to(device)
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-print("\n--- Training Finished ---")
+    # Training Loop
+    for epoch in range(EPOCHS):
+        model.train()
+        for imgs, _ in train_loader:
+            imgs = imgs.to(device)
+            optimizer.zero_grad()
+            outputs = model(imgs)
+            loss = criterion(outputs, imgs)
+            loss.backward()
+            optimizer.step()
+        print(f"Epoch [{epoch+1}/{EPOCHS}], Loss: {loss.item():.6f}")
 
-# --- SAVE THE ENCODER ---
-# Access the encoder part and save its state dictionary
-torch.save(model.encoder.state_dict(), 'encoder_model.pth')
-print("Encoder model state_dict saved to encoder_model.pth")
+    print("\n--- Training Finished ---")
 
-# --- Step 5: Load and Use the Saved Encoder ---
-print("\n--- Loading and using the saved encoder ---")
+    # --- SAVE THE ENCODER ---
+    # Access the encoder part and save its state dictionary
+    torch.save(model.encoder.state_dict(), 'encoder_model.pth')
+    print("Encoder model state_dict saved to encoder_model.pth")
 
-# 1. Instantiate a new encoder object
-loaded_encoder = Encoder(latent_dim=LATENT_DIM).to(device)
+    # --- Step 5: Load and Use the Saved Encoder ---
+    print("\n--- Loading and using the saved encoder ---")
 
-# 2. Load the saved weights
-loaded_encoder.load_state_dict(torch.load('encoder_model.pth'))
+    # 1. Instantiate a new encoder object
+    loaded_encoder = Encoder(latent_dim=LATENT_DIM).to(device)
 
-# 3. Set to evaluation mode
-loaded_encoder.eval()
+    # 2. Load the saved weights
+    loaded_encoder.load_state_dict(torch.load('encoder_model.pth'))
 
-# Create a single dummy image with the original size (210, 160, 3)
-single_image_np = np.random.randint(0, 256, (210, 160, 3), dtype=np.uint8)
+    # 3. Set to evaluation mode
+    loaded_encoder.eval()
 
-# Preprocess it exactly as you did for training
-input_tensor = transform(single_image_np).unsqueeze(0).to(device) # Add batch dimension (1, C, H, W)
-print(f"Input tensor shape for encoder: {input_tensor.shape}")
+    # Create a single dummy image with the original size (210, 160, 3)
+    single_image_np = np.random.randint(0, 256, (210, 160, 3), dtype=np.uint8)
 
-# Get the latent vector
-with torch.no_grad():
-    latent_vector = loaded_encoder(input_tensor)
+    # Preprocess it exactly as you did for training
+    input_tensor = transform(single_image_np).unsqueeze(0).to(device) # Add batch dimension (1, C, H, W)
+    print(f"Input tensor shape for encoder: {input_tensor.shape}")
 
-print(f"Shape of the resulting latent vector: {latent_vector.shape}") # Should be (1, LATENT_DIM)
-print("Example latent vector:")
-print(latent_vector)
+    # Get the latent vector
+    with torch.no_grad():
+        latent_vector = loaded_encoder(input_tensor)
+
+    print(f"Shape of the resulting latent vector: {latent_vector.shape}") # Should be (1, LATENT_DIM)
+    print("Example latent vector:")
+    print(latent_vector)
