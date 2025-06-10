@@ -7,6 +7,7 @@ from torchvision import transforms
 import gc
 
 # OTHER
+from tqdm import tqdm
 import minari
 import numpy as np
 from PIL import Image
@@ -171,7 +172,7 @@ def train(autoencoder, data_loader, epochs=20):
     opt = torch.optim.Adam(autoencoder.parameters(), lr=LEARNING_RATE)
     len_data = len(data_loader.dataset)
 
-    for epoch in range(epochs):
+    for epoch in tqdm(range(epochs)):
         epoch_loss = 0.0
         for x, _ in data_loader:
             x = x.to(device) # GPU
