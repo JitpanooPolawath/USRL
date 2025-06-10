@@ -1,7 +1,7 @@
 
-# Unsupervise Reinforcement learning (USRL)
+# Unsupervised Reinforcement learning (USRL)
 
-This project tries to use unsupervise autoencoder to produce a latent space input for an reinforcement learning model. Hopefully increasing generalization. 
+This project aims to utilize an unsupervised autoencoder to generate a latent space input for an online reinforcement learning model. Hopefully, increasing generalization. 
 
 
 
@@ -14,7 +14,7 @@ environment requirement.
   pip install torch gymnasium minari  
 ```
     
-Running the VAE model to train the model on breakout, centipede, and demon attack.
+Running the VAE model to train it on breakout, centipede, and demon attack.
 ```bash
   python VAE.py
 ```
