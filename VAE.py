@@ -6,10 +6,13 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 import gc
 
+# OTHER
 import minari
 import numpy as np
 from PIL import Image
 import os
+import matplotlib.pyplot as plt
+import matplotlib
 
 # --- Hyperparameters ---
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -164,6 +167,7 @@ def loss_function(recon_x, x, mu, log_var):
     return BCE + KLD
 
 def train(autoencoder, data_loader, epochs=20):
+    print("Starting training")
     opt = torch.optim.Adam(autoencoder.parameters(), lr=LEARNING_RATE)
     len_data = len(data_loader.dataset)
 
@@ -196,6 +200,52 @@ def train(autoencoder, data_loader, epochs=20):
 
     return autoencoder
 
+def plotLatentSpace(autoencoder, data_loader, device='cuda'):
+    """
+    Visualize the 2D latent space of a VAE trained on Atari datasets.
+    Color-codes points by game type to show how different games cluster.
+    """
+    
+    mus_list = []
+    game_labels_list = []
+    
+    with torch.no_grad():
+        for x, game_labels in data_loader:
+            x = x.to(device)
+            
+            x_hat, mu, log_var = autoencoder(x)
+            
+            # Store latent representations and game labels
+            mus_list.append(mu.cpu())
+            game_labels_list.append(game_labels.cpu())
+    
+    # Concatenate all batches
+    mus = torch.cat(mus_list, dim=0).numpy()
+    game_labels = torch.cat(game_labels_list, dim=0).numpy()
+    
+    # Handle case where game_labels might be multi-dimensional
+    if game_labels.ndim > 1:
+        if len(game_labels.shape) > 2:
+            game_labels = game_labels.reshape(game_labels.shape[0], -1)  # Flatten to (batch, features)
+        
+        game_labels = game_labels.mean(axis=1)
+    
+    # Create the plot
+    plt.figure(figsize=(12, 10))
+    
+    # Plot each game separately for better legend
+    plt.scatter(mus[:, 0], mus[:, 1], 
+                       c=game_labels, s=8, alpha=0.7)
+    
+    plt.title('Atari Games Latent Space Visualization', fontsize=16)
+    plt.xlabel('Latent Dimension 1', fontsize=12)
+    plt.ylabel('Latent Dimension 2', fontsize=12)
+    plt.legend(fontsize=12)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+    
+
 class ObservationDataset(Dataset):
     def __init__(self, observations, transform=None):
         self.observations = observations
@@ -214,7 +264,9 @@ class ObservationDataset(Dataset):
 
 if __name__ == "__main__":
 
-    training = True
+    training = False
+    plotting = True
+    testing = False
 
     # --- Define Transforms for Preprocessing ---
     # Convert numpy array -> PIL Image -> Grayscale -> Resize -> To Tensor (scales to [0,1])
@@ -226,17 +278,17 @@ if __name__ == "__main__":
     ])
 
     print("Loading datasets...")
-    datasetBreak = minari.load_dataset('atari/breakout/expert-v0', download=True)
-    datasetBreak.set_seed(seed=123)
-    datasetCen = minari.load_dataset('atari/centipede/expert-v0', download=True)
-    datasetCen.set_seed(seed=123)
-    datasetDem = minari.load_dataset('atari/demonattack/expert-v0', download=True)
-    datasetDem.set_seed(seed=123)
+    dataset1 = minari.load_dataset('atari/breakout/expert-v0', download=True)
+    dataset1.set_seed(seed=123)
+    dataset2 = minari.load_dataset('atari/centipede/expert-v0', download=True)
+    dataset2.set_seed(seed=123)
+    dataset3 = minari.load_dataset('atari/assault/expert-v0', download=True)
+    dataset3.set_seed(seed=123)
 
     if training:
         # --- Collect all observations from multiple episodes ---
         all_observations = []
-        for i,dataS in enumerate([datasetBreak, datasetCen, datasetDem]):
+        for i,dataS in enumerate([dataset1, dataset2, dataset3]):
           if i == 2:
             episodes = dataS.sample_episodes(2) # Using 10 episodes for a decent dataset size
           else:
@@ -267,20 +319,40 @@ if __name__ == "__main__":
     loaded_vae.load_state_dict(torch.load('vae_model_all.pth'))
     loaded_vae.eval()
 
-    # Get a single observation from a different part of the dataset
-    test_episode = datasetCen[9]
-    test_obs_np = test_episode.observations[100] # Pick an observation from the middle
+    # Plotting
+    if plotting:
+        all_observations = []
+        for i,dataS in enumerate([dataset1, dataset2, dataset3]):
+          if i == 2:
+            episodes = dataS.sample_episodes(1) # Using 10 episodes for a decent dataset size
+          else:
+            episodes = dataS.sample_episodes(2) # Using 10 episodes for a decent dataset size
+          for ep in episodes:
+              all_observations.extend(ep.observations)
+          print(f"Collected {len(all_observations)} total observations.")
 
-    # Apply the same transformation
-    test_obs_tensor = data_transform(test_obs_np).to(device)
+        # --- Create Dataset and DataLoader ---
+        training_dataset = ObservationDataset(all_observations[:8000], transform=data_transform)
+        train_loader = DataLoader(training_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
 
-    # Add a batch dimension (B, C, H, W)
-    test_obs_tensor = test_obs_tensor.unsqueeze(0)
+        plotLatentSpace(loaded_vae, train_loader)
 
-    # Generate reconstruction
-    with torch.no_grad():
-        reconstruction, _, _ = loaded_vae(test_obs_tensor)
+    if testing:
+        # Get a single observation from a different part of the dataset
+        test_episode = dataset2[9]
+        test_obs_np = test_episode.observations[100] # Pick an observation from the middle
 
-    # Save the final test reconstruction
-    save_reconstruction(reconstruction, test_obs_tensor, "final_test")
-    print("Saved final test reconstruction to ./output_images/reconstruction_epoch_final_test.png")
+        # Apply the same transformation
+        test_obs_tensor = data_transform(test_obs_np).to(device)
+
+        # Add a batch dimension (B, C, H, W)
+        test_obs_tensor = test_obs_tensor.unsqueeze(0)
+
+        # Generate reconstruction
+        with torch.no_grad():
+            reconstruction, _, _ = loaded_vae(test_obs_tensor)
+
+        # Save the final test reconstruction
+        save_reconstruction(reconstruction, test_obs_tensor, "final_test")
+        print("Saved final test reconstruction to ./output_images/reconstruction_epoch_final_test.png")
+
