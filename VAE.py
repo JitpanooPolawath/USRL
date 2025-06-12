@@ -266,7 +266,7 @@ class ObservationDataset(Dataset):
 if __name__ == "__main__":
 
     training = False
-    plotting = True
+    plotting = False
     testing = False
 
     # --- Define Transforms for Preprocessing ---
@@ -308,9 +308,9 @@ if __name__ == "__main__":
 
         # --- Save the Models ---
         torch.save(model.state_dict(), 'vae_model_all.pth')
-        print("Full VAE model state_dict saved to vae_model.pth")
+        print("Full VAE model state_dict saved to vae_model_all.pth")
         torch.save(model.encoder.state_dict(), 'encoder_model_all.pth')
-        print("Encoder model state_dict saved to encoder_model.pth")
+        print("Encoder model state_dict saved to encoder_model_all.pth")
 
     # --- Example of Loading and Using the Model ---
     print("\n--- Loading model and generating a reconstruction ---")
