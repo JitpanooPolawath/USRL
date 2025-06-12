@@ -21,7 +21,19 @@ EPOCHS = 200
 WH = 128          # Using a power of 2 for size makes conv layers simpler
 LEARNING_RATE = 1e-3 
 N_ACTIONS = 18 # The biggest action
-SAMP_EPS = 5 # amount to train per env
+SAMP_EPS = 9 # amount to train per env
+
+# Expert datasets
+print("Loading datasets...")
+datasets_name = ['breakout','centipede','assault']
+dataset1 = minari.load_dataset('atari/breakout/expert-v0', download=True)
+dataset1.set_seed(seed=12)
+dataset2 = minari.load_dataset('atari/centipede/expert-v0', download=True)
+dataset2.set_seed(seed=13)
+dataset3 = minari.load_dataset('atari/assault/expert-v0', download=True)
+dataset3.set_seed(seed=12)
+# datasets = [dataset1,dataset2,dataset3]
+datasets = [dataset1]
 
 # --- Neural Network agent ---
 # Hypernetworks 
@@ -128,20 +140,9 @@ if __name__ == "__main__":
         transforms.ToTensor()
     ])
 
-    # Expert datasets
-    print("Loading datasets...")
-    datasets_name = ['breakout','centipede','assault']
-    dataset1 = minari.load_dataset('atari/breakout/expert-v0', download=True)
-    dataset1.set_seed(seed=10)
-    dataset2 = minari.load_dataset('atari/centipede/expert-v0', download=True)
-    dataset2.set_seed(seed=13)
-    dataset3 = minari.load_dataset('atari/assault/expert-v0', download=True)
-    dataset3.set_seed(seed=12)
-    datasets = [dataset1,dataset2,dataset3]
-
     # Load a encoder model
     loaded_E = VariationalEncoder(latent_dims=LATENT_DIMS).to(device)
-    loaded_E.load_state_dict(torch.load('./models/encoder_model_all.pth'))
+    loaded_E.load_state_dict(torch.load('./models/VAE/encoder_model_all.pth'))
     loaded_E.eval()
 
     # Initialize agent
@@ -152,7 +153,6 @@ if __name__ == "__main__":
     log_interval = 1000
     loss_values = []
     running_loss = 0.0
-    step_count = 0
 
     print("Starting training")
     # Training on datasets
@@ -164,8 +164,8 @@ if __name__ == "__main__":
         sample_data = dataset.sample_episodes(SAMP_EPS)
         n_action = dataset.spec.action_space.n
         # Loop through the episodeData:
-        for episode_data in sample_data:
-            for step in tqdm(range(len(episode_data.observations)-1), desc=f"Training {datasets_name[task_id]}: "):
+        for i,episode_data in enumerate(sample_data):
+            for step in tqdm(range(len(episode_data.observations)-1), desc=f"Training {datasets_name[task_id]}-sample [{i+1}] : "):
                 # print(episode_data.observations[step], episode_data.actions[step], episode_data.rewards[step])
                 enc_obs = data_transform(episode_data.observations[step]).unsqueeze(0).to(device)
                 with torch.no_grad():
@@ -179,9 +179,9 @@ if __name__ == "__main__":
                 current_loss = loss.item()
                 loss_values.append(current_loss)
                 running_loss += current_loss
-                step_count += 1
+                step += 1
 
-                if step_count % log_interval == 0:
+                if step % log_interval == 0:
                     avg_loss = running_loss / log_interval
                     print(f"\nAverage loss over last {log_interval} steps: {avg_loss:.6f}")
                     running_loss = 0.0  # Reset for next interval
@@ -193,11 +193,9 @@ if __name__ == "__main__":
                 optimizer.step()
 
                 # Clear cache
-                if step_count % 50 == 0:
+                if step % 50 == 0:
                     torch.cuda.empty_cache()  # Clear GPU cache
                     gc.collect()  # Clear CPU cache
-
-            print()
 
         torch.save(neural_model.state_dict(), f'agent_hyperneural_{datasets_name[task_id]}.pth')
         print(f"{datasets_name[task_id]} saved to agent_hyperneural_{datasets_name[task_id]}.pth")
