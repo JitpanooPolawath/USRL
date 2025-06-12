@@ -3,6 +3,9 @@
 
 This project aims to utilize an unsupervised autoencoder to generate a latent space input for an online reinforcement learning model. Hopefully, increasing generalization. 
 
+Ataridataset.py change to minari in VAE.py
+
+autoencoder.py change to VAE.py (discontinued)
 
 
 ## Installation
