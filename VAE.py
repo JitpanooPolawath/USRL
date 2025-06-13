@@ -18,9 +18,9 @@ import matplotlib
 # --- Hyperparameters ---
 device = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 64
-LATENT_DIMS = 32
-EPOCHS = 200
-WH = 128          # Using a power of 2 for size makes conv layers simpler
+LATENT_DIMS = 64
+EPOCHS = 100
+WH = 256          # Using a power of 2 for size makes conv layers simpler
 LEARNING_RATE = 1e-3
 
 def save_reconstruction(reconstructed_tensor, original_tensor, epoch):
@@ -50,36 +50,50 @@ def save_reconstruction(reconstructed_tensor, original_tensor, epoch):
 
 
 class VariationalEncoder(nn.Module):
-    def __init__(self, latent_dims, image_size=128):
+    def __init__(self, latent_dims=64, image_size=256):
         super(VariationalEncoder, self).__init__()
         self.image_size = image_size
+        
+        # Convulational network
+        self.conv_layers = nn.Sequential(
+            # 256x256 -> 128x128
+            nn.Conv2d(1, 32, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            
+            # 128x128 -> 64x64
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            
+            # 64x64 -> 32x32
+            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            
+            # 32x32 -> 16x16
+            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            
+            # 16x16 -> 8x8
+            nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            
+            # 8x8 -> 4x4
+            nn.Conv2d(512, 512, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+        )
 
-        # Calculate number of downsampling layers needed
-        # Each conv layer with stride=2 halves the spatial dimensions
-        self.num_layers = int(torch.log2(torch.tensor(image_size // 4)).item())  # Down to 4x4
-
-        # Build convolutional layers dynamically
-        layers = []
-        in_channels = 1
-        out_channels = 32
-
-        for i in range(self.num_layers):
-            layers.extend([
-                nn.Conv2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1),
-                nn.ReLU()
-            ])
-            in_channels = out_channels
-            out_channels = min(out_channels * 2, 512)  # Cap at 512 channels
-
-        self.conv_layers = nn.Sequential(*layers)
-        self.final_channels = in_channels
-
-        # Calculate flattened dimension
-        self.flattened_dim = self.final_channels * 4 * 4
+        # Final feature map is 512 channels × 4 × 4 = 8192
+        self.flattened_dim = 512 * 4 * 4
 
         # Fully connected layers for latent space
         self.fc_mu = nn.Linear(self.flattened_dim, latent_dims)
         self.fc_log_var = nn.Linear(self.flattened_dim, latent_dims)
+
 
     def forward(self, x):
         x = self.conv_layers(x)
@@ -92,48 +106,53 @@ class VariationalEncoder(nn.Module):
         return mu, log_var
 
 class Decoder(nn.Module):
-    def __init__(self, latent_dims, image_size=128):
+    def __init__(self, latent_dims=64, image_size=256):
         super(Decoder, self).__init__()
         self.latent_dims = latent_dims
         self.image_size = image_size
 
-        # Calculate number of upsampling layers needed
-        self.num_layers = int(torch.log2(torch.tensor(image_size // 4)).item())
-
-        # Calculate starting channels (should match encoder's final channels)
-        start_channels = 32
-        for _ in range(self.num_layers - 1):
-            start_channels = min(start_channels * 2, 512)
-
-        self.start_channels = start_channels
-        self.start_dim = self.start_channels * 4 * 4
+        # Start from latent vector and project to 4x4x512
+        self.start_dim = 512 * 4 * 4
         self.fc = nn.Linear(latent_dims, self.start_dim)
 
-        # Build transposed convolutional layers dynamically
-        layers = []
-        in_channels = self.start_channels
-
-        for i in range(self.num_layers - 1):
-            out_channels = max(in_channels // 2, 32)
-            layers.extend([
-                nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1),
-                nn.ReLU()
-            ])
-            in_channels = out_channels
-
-        # Final layer to output single channel
-        layers.extend([
-            nn.ConvTranspose2d(in_channels, 1, kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid()
-        ])
-
-        self.deconv_layers = nn.Sequential(*layers)
+        # Transposed convolutions to upsample from 4x4 to 256x256
+        self.deconv_layers = nn.Sequential(
+            # 4x4 -> 8x8
+            nn.ConvTranspose2d(512, 512, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            
+            # 8x8 -> 16x16
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            
+            # 16x16 -> 32x32
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            
+            # 32x32 -> 64x64
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            
+            # 64x64 -> 128x128
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            
+            # 128x128 -> 256x256
+            nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1),
+            nn.Sigmoid()  # Output values between 0 and 1
+        )
 
     def forward(self, z):
         x = self.fc(z)
-        x = x.view(-1, self.start_channels, 4, 4)
+        x = x.view(-1, 512, 4, 4) # (batch_size, 512, 4, 4)
         x = self.deconv_layers(x)
         return x
+
 
 class VariationalAutoencoder(nn.Module):
     def __init__(self, latent_dims, image_size=128):
@@ -197,7 +216,7 @@ def train(autoencoder, data_loader, epochs=20):
             save_reconstruction(x_hat, x, epoch + 1)
 
         avg_loss = epoch_loss / len_data
-        print(f"Epoch [{epoch+1}/{epochs}], Average Loss: {avg_loss:.4f}")
+        print(f"\nEpoch [{epoch+1}/{epochs}], Average Loss: {avg_loss:.4f}")
 
     return autoencoder
 
@@ -265,9 +284,9 @@ class ObservationDataset(Dataset):
 
 if __name__ == "__main__":
 
-    training = False
+    training = True
     plotting = False
-    testing = False
+    testing = True
 
     # --- Define Transforms for Preprocessing ---
     # Convert numpy array -> PIL Image -> Grayscale -> Resize -> To Tensor (scales to [0,1])
@@ -277,10 +296,12 @@ if __name__ == "__main__":
         transforms.Resize((WH, WH)),
         transforms.ToTensor()
     ])
+    vae_name = 'breakout_vae_model_all.pth'
+    enc_name = 'breakout_encoder_model_all.pth'
 
     print("Loading datasets...")
     dataset1 = minari.load_dataset('atari/breakout/expert-v0', download=True)
-    dataset1.set_seed(seed=123)
+    dataset1.set_seed(seed=40)
     dataset2 = minari.load_dataset('atari/centipede/expert-v0', download=True)
     dataset2.set_seed(seed=123)
     dataset3 = minari.load_dataset('atari/assault/expert-v0', download=True)
@@ -289,11 +310,11 @@ if __name__ == "__main__":
     if training:
         # --- Collect all observations from multiple episodes ---
         all_observations = []
-        for i,dataS in enumerate([dataset1, dataset2, dataset3]):
+        for i,dataS in enumerate([dataset1]):
           if i == 2:
             episodes = dataS.sample_episodes(2) # Using 10 episodes for a decent dataset size
           else:
-            episodes = dataS.sample_episodes(5) # Using 10 episodes for a decent dataset size
+            episodes = dataS.sample_episodes(9) # Using 10 episodes for a decent dataset size
           for ep in episodes:
               all_observations.extend(ep.observations)
           print(f"Collected {len(all_observations)} total observations.")
@@ -307,17 +328,17 @@ if __name__ == "__main__":
         model = train(model, train_loader, epochs=EPOCHS)
 
         # --- Save the Models ---
-        torch.save(model.state_dict(), 'vae_model_all.pth')
-        print("Full VAE model state_dict saved to vae_model_all.pth")
-        torch.save(model.encoder.state_dict(), 'encoder_model_all.pth')
-        print("Encoder model state_dict saved to encoder_model_all.pth")
+        torch.save(model.state_dict(), vae_name)
+        print(f"Full VAE model state_dict saved to {vae_name}")
+        torch.save(model.encoder.state_dict(), enc_name)
+        print(f"Encoder model state_dict saved to {enc_name}")
 
     # --- Example of Loading and Using the Model ---
     print("\n--- Loading model and generating a reconstruction ---")
 
     # Load a fresh model
     loaded_vae = VariationalAutoencoder(latent_dims=LATENT_DIMS).to(device)
-    loaded_vae.load_state_dict(torch.load('vae_model_all.pth'))
+    loaded_vae.load_state_dict(torch.load(vae_name))
     loaded_vae.eval()
 
     # Plotting
@@ -340,7 +361,7 @@ if __name__ == "__main__":
 
     if testing:
         # Get a single observation from a different part of the dataset
-        test_episode = dataset2[9]
+        test_episode = dataset1[9]
         test_obs_np = test_episode.observations[100] # Pick an observation from the middle
 
         # Apply the same transformation
