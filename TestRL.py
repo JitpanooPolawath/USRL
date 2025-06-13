@@ -15,9 +15,10 @@ from HRL import agent
 device = "cuda" if torch.cuda.is_available() else "cpu"
 num_steps = 1000
 EPS = 10
-LATENT_DIMS = 32
-N_ACTIONS = 18
-WH = 128
+LATENT_DIMS = 64
+N_ACTIONS = 4
+WH = 256
+NUM_CLASS = 1
 
 # Transforms Atari states to encoded
 data_transform = transforms.Compose([
@@ -32,18 +33,18 @@ if __name__ == "__main__":
     env = gym.make(f"ALE/{name}", render_mode="human")
     
     # Load agent
-    neural_model = agent(LATENT_DIMS,N_ACTIONS,3).to(device)
+    neural_model = agent(LATENT_DIMS,N_ACTIONS,1).to(device)
     neural_model.load_state_dict(torch.load('models/agent_hyperneural_comp.pth'))
     neural_model.eval()
 
     # Load a encoder model
     loaded_E = VariationalEncoder(latent_dims=LATENT_DIMS).to(device)
-    loaded_E.load_state_dict(torch.load('./models/VAE/encoder_model_all.pth'))
+    loaded_E.load_state_dict(torch.load('./models/VAE/breakout_encoder_model_all.pth'))
     loaded_E.eval()
 
     # Breakout = 0, centipede = 1, assault = 2 
     task_id = torch.tensor([0], device=device)
-    task_embedding = F.one_hot(task_id.detach().clone(), num_classes=3).float().to(device)
+    task_embedding = F.one_hot(task_id.detach().clone(), num_classes=NUM_CLASS).float().to(device)
 
     for ep in range(EPS):
         obs, info = env.reset()

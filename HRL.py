@@ -16,12 +16,12 @@ import minari
 # --- Hyperparameters ---
 device = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 64
-LATENT_DIMS = 32
+LATENT_DIMS = 64
 EPOCHS = 200
-WH = 128          # Using a power of 2 for size makes conv layers simpler
+WH = 256          # Using a power of 2 for size makes conv layers simpler
 LEARNING_RATE = 1e-3 
-N_ACTIONS = 18 # The biggest action
-SAMP_EPS = 9 # amount to train per env
+N_ACTIONS = 4 # The biggest action
+SAMP_EPS = 6 # amount to train per env
 
 # Expert datasets
 print("Loading datasets...")
@@ -142,7 +142,7 @@ if __name__ == "__main__":
 
     # Load a encoder model
     loaded_E = VariationalEncoder(latent_dims=LATENT_DIMS).to(device)
-    loaded_E.load_state_dict(torch.load('./models/VAE/encoder_model_all.pth'))
+    loaded_E.load_state_dict(torch.load('./models/VAE/breakout_encoder_model_all.pth'))
     loaded_E.eval()
 
     # Initialize agent
